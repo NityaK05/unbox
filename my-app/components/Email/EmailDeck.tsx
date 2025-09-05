@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, Dimensions } from 'react-native';
+// components/Email/EmailDeck.tsx
+import React, { useMemo, useState } from 'react';
+import { View, Text, StyleSheet, SafeAreaView, StyleSheetProperties } from 'react-native';
 import { Email } from './types';
 import { SwipeableEmailCard } from './SwipeableEmailCard';
 
@@ -8,21 +9,23 @@ interface EmailDeckProps {
 }
 
 export function EmailDeck({ emails }: EmailDeckProps) {
-  const [currentEmails, setCurrentEmails] = useState(emails);
+  const [currentEmails, setCurrentEmails] = useState<Email[]>(emails);
   const [swipedIds, setSwipedIds] = useState<Set<string>>(new Set());
 
   const handleSwipe = (emailId: string) => {
-    setSwipedIds(prev => new Set([...prev, emailId]));
-    setTimeout(() => {
-      setCurrentEmails(prev => prev.filter(email => email.id !== emailId));
-    }, 300);
+    // mark as swiped and remove immediately for snappy UX
+    setSwipedIds(prev => new Set(prev).add(emailId));
+    setCurrentEmails(prev => prev.filter(e => e.id !== emailId));
   };
 
-  const visibleEmails = currentEmails.filter(email => !swipedIds.has(email.id));
+  const visibleEmails = useMemo(
+    () => currentEmails.filter(e => !swipedIds.has(e.id)),
+    [currentEmails, swipedIds]
+  );
 
   if (visibleEmails.length === 0) {
     return (
-      <View style={styles.centered}>
+      <View style={styles.emptyWrap}>
         <View style={styles.doneIcon}>
           <Text style={{ fontSize: 32 }}>✅</Text>
         </View>
@@ -33,56 +36,84 @@ export function EmailDeck({ emails }: EmailDeckProps) {
   }
 
   return (
-    <View style={styles.deckContainer}>
-      <View style={styles.cardStack}>
+    <View style={styles.root}>
+      {/* Counter (centered) */}
+      <View style={styles.counterWrap}>
+        <View style={styles.counterPill}>
+          <Text style={styles.counterText}>{visibleEmails.length} remaining</Text>
+        </View>
+      </View>
+
+      {/* Deck area */}
+      <View style={styles.deck}>
+        {/* Two subtle peeking cards behind the active stack */}
+        <View style={[styles.peek, { transform: [{ scale: 0.98 }, { translateY: 10 }] }]} />
+        <View style={[styles.peek, { transform: [{ scale: 0.96 }, { translateY: 20 }] }]} />
+
+        {/* Active + next cards */}
         {visibleEmails.slice(0, 3).map((email, index) => (
           <SwipeableEmailCard
             key={email.id}
             email={email}
             onSwipe={() => handleSwipe(email.id)}
             index={index}
+            isTop={index === 0}
           />
         ))}
-      </View>
-      <View style={styles.counterContainer}>
-        <Text style={styles.counterText}>{visibleEmails.length} remaining</Text>
       </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  deckContainer: {
+  root: {
     flex: 1,
     backgroundColor: '#f3f4f6',
-    position: 'relative',
-    justifyContent: 'center',
   },
-  cardStack: {
-    position: 'absolute',
-    top: 40,
-    left: 0,
-    right: 0,
-    bottom: 0,
+
+  // counter
+  counterWrap: {
     alignItems: 'center',
-    justifyContent: 'center',
+    paddingTop: 8,
+    paddingBottom: 8,
   },
-  counterContainer: {
-    position: 'absolute',
-    top: 16,
-    left: Dimensions.get('window').width / 2 - 60,
-    width: 120,
+  counterPill: {
     backgroundColor: 'rgba(0,0,0,0.25)',
     borderRadius: 16,
     paddingVertical: 6,
-    alignItems: 'center',
+    paddingHorizontal: 14,
   },
   counterText: {
     color: '#fff',
     fontSize: 14,
     fontWeight: '500',
   },
-  centered: {
+
+  // deck
+  deck: {
+    flex: 1,
+    position: 'relative',
+    // leave edges clean; cards handle their own inset
+  },
+
+  // peek layers behind the active card (give that stacked feel)
+  peek: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    top: 16,
+    bottom: 16,
+    borderRadius: 24,
+    backgroundColor: '#fff',
+    opacity: 0.9,
+    shadowColor: '#000',
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 6 },
+  },
+
+  // empty state
+  emptyWrap: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
@@ -114,3 +145,5 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
 });
+
+export default EmailDeck;

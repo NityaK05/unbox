@@ -1,70 +1,136 @@
+// components/Email/SwipeableEmailCard.tsx
 import React from 'react';
-import { Animated, PanResponder, View, Text, StyleSheet, Dimensions } from 'react-native';
+import {
+  Animated,
+  PanResponder,
+  View,
+  Text,
+  StyleSheet,
+  useWindowDimensions,
+} from 'react-native';
 import { Badge } from './Badge';
 import { Email } from './types';
 
-interface SwipeableEmailCardProps {
+type Props = {
   email: Email;
   onSwipe: () => void;
-  index: number;
-}
+  index: number;   // 0 = top (interactive)
+  isTop: boolean;
+};
 
-const SCREEN_WIDTH = Dimensions.get('window').width;
+export function SwipeableEmailCard({ email, onSwipe, index, isTop }: Props) {
+  const { width } = useWindowDimensions();
 
-export function SwipeableEmailCard({ email, onSwipe, index }: SwipeableEmailCardProps) {
-  const position = React.useRef(new Animated.ValueXY()).current;
-  const [swiped, setSwiped] = React.useState(false);
+  // horizontal translation only
+  const x = React.useRef(new Animated.Value(0)).current;
 
-  const panResponder = React.useRef(
-    PanResponder.create({
-      onMoveShouldSetPanResponder: (_, gesture) => Math.abs(gesture.dx) > 10,
-      onPanResponderMove: Animated.event([
-        null,
-        { dx: position.x, dy: position.y },
-      ], { useNativeDriver: false }),
-      onPanResponderRelease: (_, gesture) => {
-        if (Math.abs(gesture.dx) > 100) {
-          Animated.timing(position, {
-            toValue: { x: gesture.dx > 0 ? SCREEN_WIDTH : -SCREEN_WIDTH, y: 0 },
-            duration: 200,
-            useNativeDriver: false,
-          }).start(() => {
-            setSwiped(true);
-            onSwipe();
-          });
-        } else {
-          Animated.spring(position, {
-            toValue: { x: 0, y: 0 },
-            useNativeDriver: false,
+  // once we complete a swipe, disable handlers to avoid post-unmount calls
+  const disabledRef = React.useRef(false);
+
+  const THRESH = width * 0.25;
+  const OFF = width * 1.2;
+  const INSET = 16;
+
+  // When this card becomes top again, re-enable and reset translation
+  React.useEffect(() => {
+    if (isTop) {
+      disabledRef.current = false;
+      x.stopAnimation();
+      x.setValue(0);
+    }
+  }, [isTop, x]);
+
+  const finishSwipe = (toValue: number) => {
+    disabledRef.current = true;
+    Animated.timing(x, {
+      toValue,
+      duration: 180,
+      useNativeDriver: true,
+    }).start(() => {
+      onSwipe(); // parent removes the card
+    });
+  };
+
+  // IMPORTANT: create PanResponder when `isTop` changes
+  const panResponder = React.useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_evt, g) =>
+          isTop && !disabledRef.current && Math.abs(g.dx) > 10,
+
+        onPanResponderMove: (_evt, g) => {
+          if (disabledRef.current) return;
+          x.setValue(g.dx); // no Animated.event → avoids Hermes edge case
+        },
+
+        onPanResponderRelease: (_evt, g) => {
+          if (disabledRef.current) return;
+          const goRight = g.dx > THRESH || g.vx > 0.8;
+          const goLeft = g.dx < -THRESH || g.vx < -0.8;
+
+          if (goRight) return finishSwipe(OFF);
+          if (goLeft) return finishSwipe(-OFF);
+
+          Animated.spring(x, {
+            toValue: 0,
+            bounciness: 6,
+            speed: 16,
+            useNativeDriver: true,
           }).start();
-        }
-      },
-    })
-  ).current;
+        },
 
-  if (swiped) return null;
+        onPanResponderTerminate: () => {
+          if (disabledRef.current) return;
+          Animated.spring(x, {
+            toValue: 0,
+            bounciness: 6,
+            speed: 16,
+            useNativeDriver: true,
+          }).start();
+        },
+      }),
+    [isTop, THRESH, OFF, x]
+  );
 
-  // Card stacking effect
+  // subtle tilt for flair
+  const rotate = x.interpolate({
+    inputRange: [-width, 0, width],
+    outputRange: ['-8deg', '0deg', '8deg'],
+  });
+
+  // stacked deck look (translateY/scale by index)
   const cardStyle = {
     transform: [
-      { translateX: position.x },
+      { translateX: x },
       { translateY: index * 8 },
       { scale: 1 - index * 0.02 },
-      { rotate: position.x.interpolate({
-          inputRange: [-SCREEN_WIDTH, 0, SCREEN_WIDTH],
-          outputRange: ['-15deg', '0deg', '15deg'],
-        }) },
+      { rotate },
     ],
     zIndex: 10 - index,
     position: 'absolute' as const,
-    width: SCREEN_WIDTH - 48,
-    left: 24,
-    top: 0,
+    left: INSET,
+    right: INSET,
+    top: INSET,
+    bottom: INSET,
   };
 
+  // stop any running animation on unmount
+  React.useEffect(() => {
+    return () => {
+      x.stopAnimation();
+      disabledRef.current = true;
+    };
+  }, [x]);
+
   return (
-    <Animated.View style={[styles.card, cardStyle]} {...panResponder.panHandlers}>
+    <Animated.View
+      style={[styles.card, cardStyle]}
+      pointerEvents={isTop ? 'auto' : 'none'}
+      {...(isTop ? panResponder.panHandlers : {})}
+      accessibilityLabel={`Email from ${email.sender}, ${email.subject}`}
+    >
       <View style={styles.gradient} />
+
       <View style={styles.content}>
         <View style={styles.headerRow}>
           <View style={{ flex: 1 }}>
@@ -73,13 +139,16 @@ export function SwipeableEmailCard({ email, onSwipe, index }: SwipeableEmailCard
           </View>
           {!email.read && <View style={styles.unreadDot} />}
         </View>
+
         <Text style={styles.subject}>{email.subject}</Text>
         <Text style={styles.preview}>{email.preview}</Text>
+
         <View style={styles.badgeRow}>
           {email.aiSummary.map((tag, idx) => (
             <Badge key={idx}>{tag}</Badge>
           ))}
         </View>
+
         <View style={styles.swipeIndicator}>
           <View style={styles.dot} />
           <View style={styles.dot} />
@@ -93,12 +162,12 @@ export function SwipeableEmailCard({ email, onSwipe, index }: SwipeableEmailCard
 const styles = StyleSheet.create({
   card: {
     backgroundColor: '#fff',
-    borderRadius: 20,
-    shadowColor: '#000',
-    shadowOpacity: 0.10,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
+    borderRadius: 24, // set to 0 for true edge-to-edge
     overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOpacity: 0.12,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 8 },
   },
   gradient: {
     ...StyleSheet.absoluteFillObject,
@@ -106,6 +175,8 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: 24,
+    minHeight: 420,
+    justifyContent: 'flex-start',
   },
   headerRow: {
     flexDirection: 'row',
